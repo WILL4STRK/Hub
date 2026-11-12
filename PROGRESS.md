@@ -63,7 +63,8 @@ Target: Intel MacBook, macOS 13.7.8, Command Line Tools only (Swift 5.8.1, SDK 1
   island pill with art via MediaRemote, chevron + Hub icon).
 - After (Hub, all modules on, 60 s idle): 1.49 s CPU/60 s, 29 MB footprint, 6 threads. Before: 4.28 s, 88 MB.
 - Fixed: chevron reopened after a click (hover mapping + HoverGate). Checks: Shelf 96/96, Awning 39/39, Hub 34/34.
-- First local commit approved by the owner (2026-11-12). Local only: never push.
+- First local commit approved by the owner (2026-11-12). Owner later approved a private GitHub repo:
+  https://github.com/WILL4STRK/Hub (private, main pushed at fe269ce). Ask before every further push.
 - Owner is testing: lock-screen card on a real lock, Accessibility grant after rebuild, modules starting when an old app quits.
 - 2026-11-12 09:48 move fixes (not committed): ShelfCore/ArrangeGuard.swift (ArrangeLock, MoveCheck). Moves now
   reveal, poll until the item is fully on a screen (3 s timeout -> error, no drag), re-read the frame, hold the lock
