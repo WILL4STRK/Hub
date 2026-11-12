@@ -80,6 +80,14 @@ Target: Intel MacBook, macOS 13.7.8, Command Line Tools only (Swift 5.8.1, SDK 1
   to hidden 10/10, to visible 10/10, 0 retries; 1Password back to visible. Rebuilt at 10:02 and Hub logged
   "Accessibility trusted: yes": the grant survives rebuilds. Not committed yet (owner decides).
   Harness: scratchpad movetest.sh posts ShelfCommand "assign:<key>=<section>" and reads "move result" log lines.
+- 2026-11-12 10:04 owner-approved cleanup: committed 598a98a; permanently deleted ~/Applications/Claude Widgets.app
+  and ~/Applications/Awning.app (no installed Shelf.app existed; ~/Projects/Shelf/build/Shelf.app kept). Removed login
+  items Awning x3 and Shelf x1 (System Events); BTM now has 0 entries for the three ids. Launchpad DB lists only Hub.
+  Hub relaunched: all modules up, Accessibility trusted. Old prefs domains kept.
+- FOUND 10:05: ~/Documents/Dev/awning (Awning source + .git) is missing. Not deleted by this session (only the two
+  bundle paths were removed); not in Trash. ~/Documents/Dev mtime 09:45; the folder has a Syncthing .stignore and two
+  syncthing processes run. Hub has a copy of Awning's Sources/ and scripts/Checks (working tree at 08:58), not its
+  .git, PROGRESS.md, README.md, run.sh, clean.sh, scripts/make-icon.swift, Resources/Info.plist. WAITING on owner.
 - M3 in progress: Hub installed at ~/Applications/Hub.app and running (2026-11-12 09:21). Migration ran on the real
   domains: 19 values copied (report in General); old domains unchanged (Awning 15 keys, Shelf 7, Claude Widgets 2).
   All three modules show "Paused" because the old apps run. Settings window verified by window screenshot
