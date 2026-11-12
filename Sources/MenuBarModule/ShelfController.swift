@@ -23,6 +23,9 @@ final class ShelfController: NSObject {
     private var lastScroll = Date.distantPast
     private var leaveWork: DispatchWorkItem?
     private var hoverGate = HoverGate()
+    /// Held while arranging items: no collapse or section change from any trigger (see ShelfCore ArrangeLock).
+    var arrangeLock = ArrangeLock()
+    var stateChangeBlocked: Bool { arrangeLock.blocks(at: Date()) }
     private var tint: MenuBarTint?
     private var sessionObservers: [(NotificationCenter, Any)] = []
     /// Menu Bar module switched off in Hub: no status items, monitors, shortcuts or tint.
@@ -68,7 +71,7 @@ final class ShelfController: NSObject {
 
     func park() {
         guard !parked else { return }
-        collapse()
+        collapse(force: true)
         parked = true
         hoverTimer?.invalidate(); hoverTimer = nil
         leaveWork?.cancel(); leaveWork = nil
@@ -126,7 +129,19 @@ final class ShelfController: NSObject {
             if let item = MenuBarItems.describe().first(where: { $0.item.id == id }) { openItem(item, interactive: false) }
             return
         }
+        if raw.hasPrefix(ShelfCommand.assignPrefix) {
+            // "assign:<key>=<section>" (move test harness): same path as the Settings picker.
+            let body = raw.dropFirst(ShelfCommand.assignPrefix.count)
+            if let eq = body.lastIndex(of: "="), let section = MenuSection(rawValue: String(body[body.index(after: eq)...])) {
+                assign(String(body[..<eq]), to: section)
+            }
+            return
+        }
         guard let command = ShelfCommand(rawValue: raw) else { return }
+        if stateChangeBlocked {
+            Log.state.info("command \(raw, privacy: .public) ignored: arranging")
+            return
+        }
         rehideTimer?.invalidate()
         notchBar.close()
         switch command {
@@ -152,11 +167,13 @@ final class ShelfController: NSObject {
 
     /// Reveal for the Settings hover locator: no rehide timer while hovering.
     func revealForLocate(_ state: ShelfState) {
+        guard !stateChangeBlocked else { return }
         rehideTimer?.invalidate()
         notchBar.close()
         sections.apply(state, alwaysHiddenEnabled: settings.alwaysHiddenEnabled)
     }
 
+    /// Only called once the arrange lock has released.
     func restoreAfterArranging(_ state: ShelfState) {
         Log.state.info("restore after arranging -> \(state.rawValue, privacy: .public)")
         sections.apply(state, alwaysHiddenEnabled: settings.alwaysHiddenEnabled)
@@ -220,6 +237,10 @@ final class ShelfController: NSObject {
     }
 
     func show(_ state: ShelfState) {
+        if stateChangeBlocked {
+            Log.state.info("show \(state.rawValue, privacy: .public) blocked: arranging")
+            return
+        }
         Log.state.info("show \(state.rawValue, privacy: .public)")
         if state == .showHidden, showInNotchBarIfNeeded() {
             scheduleRehide()
@@ -229,8 +250,13 @@ final class ShelfController: NSObject {
         scheduleRehide()
     }
 
-    func collapse() {
+    /// `force` only for switching the module off and quitting.
+    func collapse(force: Bool = false) {
         guard !parked else { return }
+        if !force, stateChangeBlocked {
+            Log.state.info("collapse blocked: arranging")
+            return
+        }
         Log.state.info("collapse")
         rehideTimer?.invalidate()
         leaveWork?.cancel()
@@ -280,6 +306,11 @@ final class ShelfController: NSObject {
     }
 
     private func rehideTimerFired() {
+        if stateChangeBlocked {
+            Log.state.info("rehide timer fired while arranging: wait 1 s")
+            scheduleRehide(after: 1)
+            return
+        }
         let decision = RehidePolicy.decide(pointerInMenuBar: pointerInMenuBar(NSEvent.mouseLocation),
                                            menuOpen: MenuBarItems.isMenuOpen())
         Log.state.info("rehide timer fired: \(String(describing: decision), privacy: .public)")
@@ -372,7 +403,7 @@ final class ShelfController: NSObject {
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.leaveWork = nil
-            if !self.pointerInMenuBar(NSEvent.mouseLocation), !MenuBarItems.isMenuOpen() {
+            if !self.stateChangeBlocked, !self.pointerInMenuBar(NSEvent.mouseLocation), !MenuBarItems.isMenuOpen() {
                 Log.state.info("rehide: pointer left the menu bar")
                 self.collapse()
             }

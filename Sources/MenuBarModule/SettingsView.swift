@@ -32,6 +32,9 @@ struct SettingsView: View {
                         }
                     }
                 }
+                if let error = items.lastError {
+                    Text(error).font(.caption).foregroundStyle(.red)
+                }
                 ForEach(items.rows) { row in
                     HStack(spacing: 8) {
                         Image(nsImage: row.icon ?? NSImage())

@@ -293,5 +293,35 @@ do {
     check(!h.pointerMoved(inZone: true, isShowing: false), "open-then-close by clicks: no reopen in zone")
 }
 
+// MARK: ArrangeLock and MoveCheck (Hub: moves failed about half the time)
+do {
+    let t0 = Date(timeIntervalSince1970: 1_000_000)
+    var l = ArrangeLock()
+    check(!l.blocks(at: t0), "lock: idle does not block")
+    l.beginSession()
+    check(l.blocks(at: t0), "lock: session blocks collapse")
+    l.beginDrag()
+    check(l.blocks(at: t0), "lock: mouse-down to mouse-up blocks")
+    l.endSession()
+    check(l.blocks(at: t0), "lock: drag still blocks after session ends")
+    l.endDrag(at: t0)
+    check(l.blocks(at: t0.addingTimeInterval(0.2)), "lock: blocks during settle (collapse 0.2 s after mouse-up)")
+    check(l.blocks(at: t0.addingTimeInterval(ArrangeLock.settle - 0.01)), "lock: blocks until the settle delay ends")
+    check(!l.blocks(at: t0.addingTimeInterval(ArrangeLock.settle + 0.01)), "lock: releases after the settle delay")
+
+    let screen = CGRect(x: 0, y: 0, width: 1680, height: 1050)
+    check(!MoveCheck.isOnScreen(CGRect(x: -3804, y: 0, width: 24, height: 24), screens: [screen]), "start: collapsed item (x=-3804) is off screen")
+    check(MoveCheck.isOnScreen(CGRect(x: 1000, y: 0, width: 24, height: 24), screens: [screen]), "start: item at x=1000 is on screen")
+    check(!MoveCheck.isOnScreen(CGRect(x: 1670, y: 0, width: 24, height: 24), screens: [screen]), "start: item past the right edge is off screen")
+    check(!MoveCheck.isOnScreen(CGRect(x: -10, y: 0, width: 24, height: 24), screens: [screen]), "start: item past the left edge is off screen")
+    check(MoveCheck.isOnScreen(CGRect(x: -900, y: 0, width: 24, height: 24),
+                               screens: [screen, CGRect(x: -1440, y: 0, width: 1440, height: 900)]), "start: item on a second screen counts")
+
+    check(MoveCheck.outcome(landed: true, attempt: 1) == .done, "verify: landed -> done")
+    check(MoveCheck.outcome(landed: false, attempt: 1) == .retry, "verify: missed once -> retry")
+    check(MoveCheck.outcome(landed: false, attempt: 2) == .failed, "verify: missed twice -> error")
+    check(MoveCheck.outcome(landed: true, attempt: 2) == .done, "verify: landed on retry -> done")
+}
+
 print("\(total - failed)/\(total) checks passed")
 exit(failed == 0 ? 0 : 1)

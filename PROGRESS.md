@@ -65,6 +65,21 @@ Target: Intel MacBook, macOS 13.7.8, Command Line Tools only (Swift 5.8.1, SDK 1
 - Fixed: chevron reopened after a click (hover mapping + HoverGate). Checks: Shelf 96/96, Awning 39/39, Hub 34/34.
 - First local commit approved by the owner (2026-11-12). Local only: never push.
 - Owner is testing: lock-screen card on a real lock, Accessibility grant after rebuild, modules starting when an old app quits.
+- 2026-11-12 09:48 move fixes (not committed): ShelfCore/ArrangeGuard.swift (ArrangeLock, MoveCheck). Moves now
+  reveal, poll until the item is fully on a screen (3 s timeout -> error, no drag), re-read the frame, hold the lock
+  from before mouse-down to mouse-up + 0.8 s (and for the whole session), verify the section, retry once, then show
+  an error in Settings. Blocked paths: collapse(), show(), rehide timer (waits 1 s), leave rehide, hover, commands,
+  locator reveal. Test harness: ShelfCommand "assign:<key>=<section>". Checks: Shelf 112/112, Awning 39/39, Hub 34/34.
+  First 1Password test run (09:51-09:53): every move refused with "drop point x=-3822 is off screen": the divider
+  frame was read 36 ms after expanding, still collapsed. Fixed: wait until item AND drop point are on screen.
+- Signing (owner approved 2026-11-12): self-signed identity "Hub Local Signing" (SHA-1 8AE70B50B735FD98A079262C038DC568895822A1,
+  10 years, codeSigning EKU) in the login keychain, codesign allowed via -T. run.sh signs with it when present, else
+  ad-hoc. Designated requirement = identifier local.hub.Hub + certificate leaf, so Accessibility survives rebuilds.
+  Remove it with: security delete-identity -Z 8AE70B50B735FD98A079262C038DC568895822A1
+- Move test 2026-11-12 ~10:00 (1Password, Hub signed with Hub Local Signing, Accessibility granted):
+  to hidden 10/10, to visible 10/10, 0 retries; 1Password back to visible. Rebuilt at 10:02 and Hub logged
+  "Accessibility trusted: yes": the grant survives rebuilds. Not committed yet (owner decides).
+  Harness: scratchpad movetest.sh posts ShelfCommand "assign:<key>=<section>" and reads "move result" log lines.
 - M3 in progress: Hub installed at ~/Applications/Hub.app and running (2026-11-12 09:21). Migration ran on the real
   domains: 19 values copied (report in General); old domains unchanged (Awning 15 keys, Shelf 7, Claude Widgets 2).
   All three modules show "Paused" because the old apps run. Settings window verified by window screenshot

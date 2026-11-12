@@ -41,7 +41,7 @@ public final class MenuBarModule {
 
     /// Before Hub quits: collapse so no item stays pushed off screen.
     public func prepareForQuit() {
-        controller?.collapse()
+        controller?.collapse(force: true)
     }
 
     public func openSearch() { controller?.openSearch() }

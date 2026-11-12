@@ -69,7 +69,10 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp build/Hub "$APP/Contents/MacOS/Hub"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/"
-codesign --force --sign - --timestamp=none "$APP"
+# Sign with the local self-signed identity "Hub Local Signing" (login keychain) when it exists: its designated
+# requirement stays the same across rebuilds, so the Accessibility grant survives. Otherwise ad-hoc.
+IDENTITY="$(security find-identity -p codesigning 2>/dev/null | awk '/"Hub Local Signing"/ {print $2; exit}')"
+codesign --force --sign "${IDENTITY:--}" --timestamp=none "$APP"
 echo "Built $APP ($(lipo -archs "$APP/Contents/MacOS/Hub"))"
 
 if [ "${1:-}" != "--no-launch" ]; then

@@ -15,6 +15,8 @@ final class ItemListModel: ObservableObject {
     @Published var rows: [ItemRow] = []
     @Published var needsAccessibility = false
     @Published var busy = false
+    /// Last move that failed, shown in Settings; nil after a clean run.
+    @Published var lastError: String?
 }
 
 /// Moves other apps' status items between sections with a posted ⌘-drag.
@@ -85,52 +87,117 @@ extension ShelfController {
         guard !pending.isEmpty, !itemList.busy else { return }
         if pending.contains(where: { $0.1 == .alwaysHidden }) && !settings.alwaysHiddenEnabled { return }
         itemList.busy = true
+        itemList.lastError = nil
+        arrangeLock.beginSession()
         let restore = currentState
         revealForArranging()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            self.performMoves(pending, restore: restore)
-        }
+        performMoves(pending, restore: restore, errors: [])
     }
 
-    private func performMoves(_ moves: [(String, MenuSection)], restore: ShelfState) {
+    /// One move at a time: reveal, wait until the item is on screen, re-read its frame, drag with the
+    /// arrange lock held, settle, verify the section, retry once, then report.
+    private func performMoves(_ moves: [(String, MenuSection)], restore: ShelfState, errors: [String], attempt: Int = 1) {
         guard let (key, target) = moves.first else {
-            restoreAfterArranging(restore)
-            itemList.busy = false
-            refreshItemList()
+            finishArranging(restore: restore, errors: errors)
             return
         }
         let rest = Array(moves.dropFirst())
+        func next(_ error: String? = nil) {
+            if let error {
+                Log.arrange.error("move \(key, privacy: .public): \(error, privacy: .public)")
+                Log.arrange.info("move result \(key, privacy: .public) target=\(target.rawValue, privacy: .public) FAIL attempts=\(attempt, privacy: .public)")
+            }
+            performMoves(rest, restore: restore, errors: errors + (error.map { [$0] } ?? []))
+        }
+        // The sections must be expanded before the frame is read (a collapsed item sits at x about -3800).
+        if currentState != .showAll { revealForArranging() }
+        guard let windowID = keyedItems().first(where: { $0.key == key })?.item.id else {
+            next("item not found in the menu bar")
+            return
+        }
+        // Wait until both the item and the drop point (which comes from the divider frames) are on screen:
+        // right after expanding, the dividers can still report their collapsed frames (x about -3800).
+        waitUntilReady(windowID, target: target, deadline: Date().addingTimeInterval(3)) { [weak self] ready in
+            guard let self else { return }
+            guard let (item, drop) = ready else {
+                next("item or drop point still off screen after 3 s with the sections expanded; nothing was moved")
+                return
+            }
+            let start = CGPoint(x: item.cgFrame.midX, y: item.cgFrame.midY)
+            let before = self.currentSection(of: item)
+            Log.arrange.info("move \(key, privacy: .public) attempt \(attempt, privacy: .public): before=\(before.rawValue, privacy: .public) target=\(target.rawValue, privacy: .public) start=(\(Int(start.x), privacy: .public),\(Int(start.y), privacy: .public)) drop=(\(Int(drop.x), privacy: .public),\(Int(drop.y), privacy: .public)) state=\(self.currentState.rawValue, privacy: .public)")
+            self.arrangeLock.beginDrag()
+            DispatchQueue.global(qos: .userInitiated).async {
+                CommandDrag.perform(from: start, to: drop)
+                DispatchQueue.main.async {
+                    self.arrangeLock.endDrag(at: Date())
+                    // Verify once the settle delay is over and macOS has placed the item.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + ArrangeLock.settle) {
+                        let now = MenuBarItems.all().first { $0.id == windowID }
+                        let landedIn = now.map { self.currentSection(of: $0) }
+                        let landed = landedIn == target
+                        Log.arrange.info("move \(key, privacy: .public) attempt \(attempt, privacy: .public) check: x=\(now.map { Int($0.frame.minX) } ?? -1, privacy: .public) section=\(landedIn?.rawValue ?? "gone", privacy: .public) state=\(self.currentState.rawValue, privacy: .public)")
+                        switch MoveCheck.outcome(landed: landed, attempt: attempt) {
+                        case .done:
+                            Log.arrange.info("move result \(key, privacy: .public) target=\(target.rawValue, privacy: .public) PASS attempts=\(attempt, privacy: .public)")
+                            self.performMoves(rest, restore: restore, errors: errors)
+                        case .retry:
+                            self.performMoves(moves, restore: restore, errors: errors, attempt: attempt + 1)
+                        case .failed:
+                            next("did not reach \(target.rawValue) after \(attempt) tries (now \(landedIn?.rawValue ?? "gone"))")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Fresh item frame and drop point, or nil while either is off screen.
+    private func readyMove(_ id: CGWindowID, target: MenuSection) -> (MenuBarItem, CGPoint)? {
+        let screens = NSScreen.screens.map(\.frame)
         let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
-        guard let item = keyedItems().first(where: { $0.key == key })?.item,
-              let hidden = sectionFrames.hidden,
-              let toggle = sectionFrames.toggle,
+        guard let item = MenuBarItems.all().first(where: { $0.id == id }),
+              MoveCheck.isOnScreen(item.frame, screens: screens),
+              let hidden = sectionFrames.hidden, let toggle = sectionFrames.toggle,
               // cocoaRect(fromCG:) is its own inverse, so it also maps Cocoa to CG.
               let drop = DropPlan.dropPoint(
                   for: target,
                   toggle: MenuBarGeometry.cocoaRect(fromCG: toggle, primaryScreenHeight: primaryHeight),
                   hiddenDivider: MenuBarGeometry.cocoaRect(fromCG: hidden, primaryScreenHeight: primaryHeight),
                   alwaysHiddenDivider: sectionFrames.always.map { MenuBarGeometry.cocoaRect(fromCG: $0, primaryScreenHeight: primaryHeight) })
-        else {
-            performMoves(rest, restore: restore)
+        else { return nil }
+        let dropCocoa = MenuBarGeometry.cocoaRect(fromCG: CGRect(x: drop.x, y: drop.y, width: 1, height: 1), primaryScreenHeight: primaryHeight)
+        return MoveCheck.isOnScreen(dropCocoa, screens: screens) ? (item, drop) : nil
+    }
+
+    /// Polls every 0.1 s until readyMove succeeds (nil on timeout).
+    private func waitUntilReady(_ id: CGWindowID, target: MenuSection, deadline: Date,
+                                then: @escaping ((MenuBarItem, CGPoint)?) -> Void) {
+        if let ready = readyMove(id, target: target) {
+            then(ready)
             return
         }
-        let start = CGPoint(x: item.cgFrame.midX, y: item.cgFrame.midY)
-        let before = currentSection(of: item)
-        Log.arrange.info("move \(key, privacy: .public): before=\(before.rawValue, privacy: .public) target=\(target.rawValue, privacy: .public) start=(\(Int(start.x), privacy: .public),\(Int(start.y), privacy: .public)) drop=(\(Int(drop.x), privacy: .public),\(Int(drop.y), privacy: .public)) chevron=\(Int(toggle.minX), privacy: .public)..\(Int(toggle.maxX), privacy: .public)")
-        let windowID = item.id
-        for delay in [0.2, 1.0, 3.0] {
-            // Sampled from the end of the drag (the drag itself takes about 1.2 s).
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2 + delay) {
-                let now = MenuBarItems.all().first { $0.id == windowID }
-                let chevron = self.sectionFrames.toggle
-                Log.arrange.info("move \(key, privacy: .public) +\(delay, privacy: .public)s: x=\(now.map { Int($0.frame.minX) } ?? -1, privacy: .public) chevron=\(chevron.map { Int($0.minX) } ?? -1, privacy: .public) section=\(now.map { self.currentSection(of: $0).rawValue } ?? "gone", privacy: .public) state=\(self.currentState.rawValue, privacy: .public)")
-            }
+        guard Date() < deadline else {
+            then(nil)
+            return
         }
-        DispatchQueue.global(qos: .userInitiated).async {
-            CommandDrag.perform(from: start, to: drop)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                self.performMoves(rest, restore: restore)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            self?.waitUntilReady(id, target: target, deadline: deadline, then: then)
+        }
+    }
+
+    private func finishArranging(restore: ShelfState, errors: [String]) {
+        arrangeLock.endSession()
+        // Restore only once the last drag's settle delay is over.
+        let wait = max(0, ArrangeLock.settle)
+        DispatchQueue.main.asyncAfter(deadline: .now() + wait) {
+            self.restoreAfterArranging(restore)
+            self.itemList.busy = false
+            if !errors.isEmpty {
+                self.itemList.lastError = errors.count == 1 ? "Move failed: \(errors[0])" : "\(errors.count) moves failed: \(errors.joined(separator: "; "))"
+                NSSound.beep()
             }
+            self.refreshItemList()
         }
     }
 }

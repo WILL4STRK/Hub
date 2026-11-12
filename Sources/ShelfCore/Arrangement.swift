@@ -87,4 +87,6 @@ public enum ShelfCommand: String, CaseIterable {
     public static let notificationName = "local.shelf.command"
     /// "pickWindow:<CGWindowID>" opens that item as a search pick would.
     public static let pickWindowPrefix = "pickWindow:"
+    /// "assign:<item key>=<visible|hidden|alwaysHidden>" moves an item as the Settings picker does (move test).
+    public static let assignPrefix = "assign:"
 }
